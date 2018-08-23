@@ -2,16 +2,16 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"io/ioutil"
 	"net/http"
 	"os"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus/promhttp"
-
+	"github.com/onrik/logrus/filename"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	log "github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v2"
 )
 
@@ -67,34 +67,60 @@ func getConfig() config {
 	var config config
 	f, err := ioutil.ReadFile(os.Getenv("VERSIONS_EXPORTER_CONFIG_FILE"))
 	if err != nil {
-		fmt.Printf("An error occured: %s\n", err)
+		log.Fatalf("An error occured while reading config file: %s\n", err)
 	}
 	err = yaml.Unmarshal(f, &config)
 	if err != nil {
-		fmt.Printf("An error occured while unmarshalling config: %s\n", err)
+		log.Fatalf("An error occured while unmarshalling config: %s\n", err)
 	}
 	return config
 }
 
+func logConfig() {
+	logLevels := map[string]log.Level{
+		"panic": log.PanicLevel,
+		"fatal": log.FatalLevel,
+		"error": log.ErrorLevel,
+		"warn":  log.WarnLevel,
+		"info":  log.InfoLevel,
+		"debug": log.DebugLevel,
+	}
+	logLevel, ok := os.LookupEnv("VERSIONS_EXPORTER_LOGLEVEL")
+	if !ok {
+		log.SetLevel(logLevels["error"])
+	} else {
+		log.SetLevel(logLevels[logLevel])
+	}
+	log.AddHook(filename.NewHook())
+	customFormatter := new(log.TextFormatter)
+	customFormatter.TimestampFormat = "2006-01-02 15:04:05"
+	log.SetFormatter(customFormatter)
+	customFormatter.FullTimestamp = true
+}
+
 func main() {
+	logConfig()
 	config := getConfig()
 	go func() {
 		for {
-			fmt.Println("Starting main loop iteration...")
+			log.Printf("Starting main loop iteration...")
 			infoGauge.Reset()
 			for i := range config.Contexts {
+				log.Debugf("Getting env %s", config.Contexts[i])
 				resp, err := http.Get(config.SourceURL + config.Contexts[i])
 				if err != nil {
-					fmt.Printf("An error occured: %s\n", err)
+					log.Errorf("An error occured: %s\n", err)
 				}
 				var env environment
 				decoder := json.NewDecoder(resp.Body)
 				err = decoder.Decode(&env)
 				if err != nil {
-					fmt.Printf("An error occured: %s\n", err)
+					log.Errorf("An error occured: %s\n", err)
 				}
 				for a := range env.Applications {
+					log.Debugf("Getting application %s", env.Applications[a])
 					for c := range env.Applications[a].ContainersSpec {
+						log.Debugf("Getting container %s", env.Applications[a].ContainersSpec)
 						infoGauge.With(prometheus.Labels{
 							"application_name": env.Applications[a].Name,
 							"version":          env.Applications[a].ContainersSpec[c].Tag,
@@ -105,10 +131,10 @@ func main() {
 					}
 				}
 			}
-			fmt.Println("Iteration done.")
+			log.Printf("Iteration done.")
 			r, err := time.ParseDuration(config.RefreshInterval)
 			if err != nil {
-				fmt.Printf("An error occured: %s\n", err)
+				log.Errorf("An error occured: %s\n", err)
 			}
 			time.Sleep(r)
 		}
@@ -116,7 +142,6 @@ func main() {
 	http.Handle("/metrics", promhttp.Handler())
 	err := http.ListenAndServe("localhost:8080", nil)
 	if err != nil {
-		fmt.Printf("An error occured: %s\n", err)
-		os.Exit(1)
+		log.Fatalf("An error occured: %s\n", err)
 	}
 }
