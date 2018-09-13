@@ -141,7 +141,7 @@ func main() {
 		}
 	}()
 	http.Handle("/metrics", promhttp.Handler())
-	err := http.ListenAndServe(":8080", nil)
+	err := http.ListenAndServe(":8083", nil)
 	if err != nil {
 		log.Fatalf("An error occured: %s\n", err)
 	}
