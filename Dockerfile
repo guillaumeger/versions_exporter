@@ -9,7 +9,6 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o /versions_exporte
 
 FROM scratch
 COPY --from=builder /versions_exporter /versions_exporter
-ADD versions_exporter /
 ADD fixtures/config.yaml /
 ENV VERSIONS_EXPORTER_LOGLEVEL=debug 
 ENV VERSIONS_EXPORTER_CONFIG_FILE="/config.yaml" 

@@ -1,3 +1,17 @@
-build:
-	docker build -t gg1113/versions_exporter:0.1.1 . --no-cache
-	docker push gg1113/versions_exporter:0.1.1
+.DEFAULT_GOAL := all
+REPO_URL=harbor.nuglif.net/admin
+APP=versions_exporter
+
+.PHONY: build-image clean
+
+build: ## Build the docker image
+	docker build . -t ${REPO_URL}/${APP}:${TAG} --no-cache
+#	docker tag versions_exporter:${TAG} versions_exporter:latest
+
+push:
+	docker push ${REPO_URL}/${APP}:${TAG}
+
+clean:
+	docker image rm ${APP}:${TAG}
+
+all: build push
