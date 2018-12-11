@@ -27,6 +27,14 @@ var infoGauge = promauto.NewGaugeVec(prometheus.GaugeOpts{
 	"container_name",
 })
 
+type versionMap struct {
+	name           string
+	currentVersion string
+	latestVersion  string
+}
+
+type versions []versionMap
+
 func logConfig() {
 	logLevels := map[string]log.Level{
 		"panic": log.PanicLevel,
@@ -59,12 +67,44 @@ func getLatestVersion(repo string) string {
 	return *version.TagName
 }
 
+func (ver versions) getDeploysVersions(c *kubernetes.Clientset) versions {
+	deploys, err := c.ExtensionsV1beta1().Deployments("").List(metav1.ListOptions{})
+	if err != nil {
+		panic(err.Error())
+	}
+	for d := range deploys.Items {
+		v, ok := deploys.Items[d].Annotations["nuglif.net/upstreamProject"]
+		if ok {
+			latestVersion := getLatestVersion(v)
+			containers := deploys.Items[d].Spec.Template.Spec.Containers
+			currentVersion := strings.Split(containers[0].Image, ":")[1]
+			ver = append(ver, versionMap{deploys.Items[d].Name, currentVersion, latestVersion})
+		}
+	}
+	return ver
+}
+
+func (ver versions) getDSVersions(c *kubernetes.Clientset) versions {
+	ds, err := c.AppsV1().Deployments("").List(metav1.ListOptions{})
+	if err != nil {
+		panic(err.Error())
+	}
+	for d := range ds.Items {
+		v, ok := ds.Items[d].Annotations["nuglif.net/upstreamProject"]
+		if ok {
+			latestVersion := getLatestVersion(v)
+			containers := ds.Items[d].Spec.Template.Spec.Containers
+			currentVersion := strings.Split(containers[0].Image, ":")[1]
+			ver = append(ver, versionMap{ds.Items[d].Name, currentVersion, latestVersion})
+		}
+	}
+	return ver
+}
+
 func main() {
 	logConfig()
-	// var kubeconfig *string
-	// kubeconfig = flag.String("kubeconfig", "", "/Users/ggermain/.kube/config")
-	// flag.Parse()
-	conf, err := clientcmd.BuildConfigFromFlags("", "/Users/ggermain/.kube/config")
+	var versions versions
+	conf, err := clientcmd.BuildConfigFromFlags("", os.Getenv("HOME")+"/.kube/config")
 	if err != nil {
 		panic(err.Error())
 	}
@@ -72,68 +112,52 @@ func main() {
 	if err != nil {
 		panic(err.Error)
 	}
-	// pods, err := clientset.CoreV1().Pods("admin").List(metav1.ListOptions{})
-	deploys, err := clientset.ExtensionsV1beta1().Deployments("").List(metav1.ListOptions{})
-	if err != nil {
-		panic(err.Error())
-	}
-	for d := range deploys.Items {
-		// log.Debug("The metadata is: %v\n", deploys.Items[d].Annotations)
-		// fmt.Printf("The metadata is: %v\n", deploys.Items[d].Annotations)
-		v, ok := deploys.Items[d].Annotations["nuglif.net/upstreamProject"]
-		if ok {
-			// log.Debug("The deploy %v has upstream project %v\n", deploys.Items[d].Name, v)
-			fmt.Printf("The deploy %v has upstream project %v\n", deploys.Items[d].Name, v)
-			latestVersion := getLatestVersion(v)
-			fmt.Printf("Latest version is %v\n", latestVersion)
-			containers := deploys.Items[d].Spec.Template.Spec.Containers
-			currentVersion := strings.Split(containers[0].Image, ":")[1]
-			fmt.Printf("Current version is %v\n\n", currentVersion)
-		}
-	}
-
-	//	go func() {
-	//		for {
-	//			log.Printf("Starting main loop iteration...")
-	//			infoGauge.Reset()
-	//			for i := range config.Contexts {
-	//				log.Debugf("Getting env %s", config.Contexts[i])
-	//				resp, err := http.Get(config.SourceURL + config.Contexts[i])
-	//				if err != nil {
-	//					log.Errorf("An error occured: %s\n", err)
-	//				}
-	//				var env environment
-	//				decoder := json.NewDecoder(resp.Body)
-	//				err = decoder.Decode(&env)
-	//				if err != nil {
-	//					log.Errorf("An error occured: %s\n", err)
-	//				}
-	//				for a := range env.Applications {
-	//					log.Debugf("Getting application %s", env.Applications[a])
-	//					for c := range env.Applications[a].ContainersSpec {
-	//						log.Debugf("Getting container %s", env.Applications[a].ContainersSpec)
-	//						infoGauge.With(prometheus.Labels{
-	//							"application_name": env.Applications[a].Name,
-	//							"version":          env.Applications[a].ContainersSpec[c].Tag,
-	//							"environment":      config.Contexts[i],
-	//							"repository":       env.Applications[a].ContainersSpec[c].Repository,
-	//							"container_name":   env.Applications[a].ContainersSpec[c].Name,
-	//						}).Set(1)
-	//					}
-	//				}
-	//			}
-	//			log.Printf("Iteration done.")
-	//			log.Printf("Next iteration in %v.", config.RefreshInterval)
-	//			r, err := time.ParseDuration(config.RefreshInterval)
-	//			if err != nil {
-	//				log.Errorf("An error occured: %s\n", err)
-	//			}
-	//			time.Sleep(r)
-	//		}
-	//	}()
-	//	http.Handle("/metrics", promhttp.Handler())
-	//	err := http.ListenAndServe(":8083", nil)
-	//	if err != nil {
-	//		log.Fatalf("An error occured: %s\n", err)
-	//	}
+	versions = versions.getDeploysVersions(clientset)
+	versions = versions.getDSVersions(clientset)
+	fmt.Println(versions)
 }
+
+//	go func() {
+//		for {
+//			log.Printf("Starting main loop iteration...")
+//			infoGauge.Reset()
+//			for i := range config.Contexts {
+//				log.Debugf("Getting env %s", config.Contexts[i])
+//				resp, err := http.Get(config.SourceURL + config.Contexts[i])
+//				if err != nil {
+//					log.Errorf("An error occured: %s\n", err)
+//				}
+//				var env environment
+//				decoder := json.NewDecoder(resp.Body)
+//				err = decoder.Decode(&env)
+//				if err != nil {
+//					log.Errorf("An error occured: %s\n", err)
+//				}
+//				for a := range env.Applications {
+//					log.Debugf("Getting application %s", env.Applications[a])
+//					for c := range env.Applications[a].ContainersSpec {
+//						log.Debugf("Getting container %s", env.Applications[a].ContainersSpec)
+//						infoGauge.With(prometheus.Labels{
+//							"application_name": env.Applications[a].Name,
+//							"version":          env.Applications[a].ContainersSpec[c].Tag,
+//							"environment":      config.Contexts[i],
+//							"repository":       env.Applications[a].ContainersSpec[c].Repository,
+//							"container_name":   env.Applications[a].ContainersSpec[c].Name,
+//						}).Set(1)
+//					}
+//				}
+//			}
+//			log.Printf("Iteration done.")
+//			log.Printf("Next iteration in %v.", config.RefreshInterval)
+//			r, err := time.ParseDuration(config.RefreshInterval)
+//			if err != nil {
+//				log.Errorf("An error occured: %s\n", err)
+//			}
+//			time.Sleep(r)
+//		}
+//	}()
+//	http.Handle("/metrics", promhttp.Handler())
+//	err := http.ListenAndServe(":8083", nil)
+//	if err != nil {
+//		log.Fatalf("An error occured: %s\n", err)
+//	}
