@@ -68,6 +68,22 @@ func getRefreshInterval() string {
 	return r
 }
 
+func getAnnotationName() string {
+	a, ok := os.LookupEnv("VERSIONS_EXPORTER_ANNOTATION_NAME")
+	if !ok {
+		return "versions_exporter/githubRepo"
+	}
+	return a
+}
+
+func getPort() string {
+	p, ok := os.LookupEnv("VERSIONS_EXPORTER_PORT")
+	if !ok {
+		return "8083"
+	}
+	return p
+}
+
 func getLatestVersion(repo string) string {
 	log.Debugf("Getting latest version of repo %v from github.", repo)
 	sepRepo := strings.Split(repo, "/")
@@ -86,8 +102,9 @@ func (ver versions) getDeploysVersions(c *kubernetes.Clientset) versions {
 	if err != nil {
 		log.Errorf("Error getting deployments: %v.", err)
 	}
+	annotation := getAnnotationName()
 	for d := range deploys.Items {
-		v, ok := deploys.Items[d].Annotations["nuglif.net/upstreamProject"]
+		v, ok := deploys.Items[d].Annotations[annotation]
 		if ok {
 			//if the label "app" is set we use this for application name, otherwise we use the name of the deploy
 			n, ok := deploys.Items[d].Labels["app"]
@@ -113,8 +130,9 @@ func (ver versions) getDSVersions(c *kubernetes.Clientset) versions {
 	if err != nil {
 		log.Errorf("Error getting daemonsets: %v.", err)
 	}
+	annotation := getAnnotationName()
 	for d := range ds.Items {
-		v, ok := ds.Items[d].Annotations["nuglif.net/upstreamProject"]
+		v, ok := ds.Items[d].Annotations[annotation]
 		if ok {
 			//if the label "app" is set we use this for application name, otherwise we use the name of the ds
 			n, ok := ds.Items[d].Labels["app"]
@@ -188,8 +206,9 @@ func main() {
 		}
 	}()
 	http.Handle("/metrics", promhttp.Handler())
-	log.Info("Serving /metrics on port 8083")
-	err := http.ListenAndServe(":8083", nil)
+	port := getPort()
+	log.Infof("Serving /metrics on port %v", port)
+	err := http.ListenAndServe(":"+port, nil)
 	if err != nil {
 		log.Fatalf("An error occured: %s", err)
 	}
