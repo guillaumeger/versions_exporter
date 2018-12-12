@@ -48,7 +48,7 @@ func init() {
 	}
 	logLevel, ok := os.LookupEnv("VERSIONS_EXPORTER_LOGLEVEL")
 	if !ok {
-		log.SetLevel(logLevels["info"])
+		log.SetLevel(logLevels["error"])
 	} else {
 		log.SetLevel(logLevels[logLevel])
 	}
@@ -64,9 +64,8 @@ func getRefreshInterval() string {
 	r, ok := os.LookupEnv("VERSIONS_EXPORTER_REFRESH_INTERVAL")
 	if !ok {
 		return "1h"
-	} else {
-		return r
 	}
+	return r
 }
 
 func getLatestVersion(repo string) string {
@@ -101,6 +100,7 @@ func (ver versions) getDeploysVersions(c *kubernetes.Clientset) versions {
 			latestVersion := getLatestVersion(v)
 			containers := deploys.Items[d].Spec.Template.Spec.Containers
 			currentVersion := strings.Split(containers[0].Image, ":")[1]
+			log.Debugf("Current version for application %v is %v", appName, currentVersion)
 			ver = append(ver, versionMap{appName, currentVersion, latestVersion})
 		}
 	}
@@ -127,10 +127,41 @@ func (ver versions) getDSVersions(c *kubernetes.Clientset) versions {
 			latestVersion := getLatestVersion(v)
 			containers := ds.Items[d].Spec.Template.Spec.Containers
 			currentVersion := strings.Split(containers[0].Image, ":")[1]
+			log.Debugf("Current version for application %v is %v", appName, currentVersion)
 			ver = append(ver, versionMap{appName, currentVersion, latestVersion})
 		}
 	}
 	return ver
+}
+
+func createK8sClient() *kubernetes.Clientset {
+	var conf *restclient.Config
+	var err error
+	c, ok := os.LookupEnv("VERSIONS_EXPORTER_OUT_OF_CLUSTER")
+	if ok {
+		if c == "true" {
+			conf, err = clientcmd.BuildConfigFromFlags("", os.Getenv("HOME")+"/.kube/config")
+			if err != nil {
+				log.Fatalf("Could not create k8s client: %v", err)
+			}
+		} else {
+			conf, err = rest.InClusterConfig()
+			if err != nil {
+				log.Fatalf("Could not create k8s client: %v", err)
+			}
+		}
+	} else {
+		conf, err = rest.InClusterConfig()
+		if err != nil {
+			log.Fatalf("Could not create k8s client: %v", err)
+		}
+	}
+
+	clientset, err := kubernetes.NewForConfig(conf)
+	if err != nil {
+		panic(err.Error)
+	}
+	return clientset
 }
 
 func main() {
@@ -139,32 +170,7 @@ func main() {
 			log.Printf("Starting main loop iteration")
 			infoGauge.Reset()
 			var versions versions
-			var conf *restclient.Config
-			var err error
-			c, ok := os.LookupEnv("VERSIONS_EXPORTER_OUT_OF_CLUSTER")
-			if ok {
-				if c == "true" {
-					conf, err = clientcmd.BuildConfigFromFlags("", os.Getenv("HOME")+"/.kube/config")
-					if err != nil {
-						log.Fatalf("Could not create k8s client: %v", err)
-					}
-				} else {
-					conf, err = rest.InClusterConfig()
-					if err != nil {
-						log.Fatalf("Could not create k8s client: %v", err)
-					}
-				}
-			} else {
-				conf, err = rest.InClusterConfig()
-				if err != nil {
-					log.Fatalf("Could not create k8s client: %v", err)
-				}
-			}
-
-			clientset, err := kubernetes.NewForConfig(conf)
-			if err != nil {
-				panic(err.Error)
-			}
+			clientset := createK8sClient()
 			versions = versions.getDeploysVersions(clientset)
 			versions = versions.getDSVersions(clientset)
 			for _, v := range versions {
