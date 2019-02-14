@@ -71,7 +71,7 @@ func getRefreshInterval() string {
 func getAnnotationName() string {
 	a, ok := os.LookupEnv("VERSIONS_EXPORTER_ANNOTATION_NAME")
 	if !ok {
-		return "versions_exporter/githubRepo"
+		return "versions-exporter/githubRepo"
 	}
 	return a
 }
@@ -103,6 +103,7 @@ func (ver versions) getDeploysVersions(c *kubernetes.Clientset) versions {
 		log.Errorf("Error getting deployments: %v.", err)
 	}
 	annotation := getAnnotationName()
+	log.Debugf("Using annotation %v", annotation)
 	for d := range deploys.Items {
 		v, ok := deploys.Items[d].Annotations[annotation]
 		if ok {
