@@ -12,7 +12,7 @@ spec:
       spec:
         containers:
           - name: versions-exporter
-            image: gg1113/versions_exporter:0.1.1
+            image: harbor.nuglif.net/adminversions_exporter:0.1.0
             env:
               - name: VERSIONS_EXPORTER_LOGLEVEL
                 value: debug
