@@ -4,6 +4,10 @@ This app takes the current version of an app in k8s, gets the latest release fro
 
 It scans deployments and daemonsets for an annotation that specifies the github org/repo.
 
+An example dashboard for grafana can be found in the fixtures directory:
+
+![screenshot](grafana_screenshot.png)
+
 ## Configuration
 
 versions_exporter takes all of its configuration via env variables.
