@@ -1,6 +1,6 @@
 # versions_exporter
 
-This app takes the current version of an app in k8s, gets the latest release from github, and expose them via prometheus format metrics.
+This exporter takes the current version of an app in k8s, gets the latest release from github, and expose them in prometheus format metrics.
 
 It scans deployments and daemonsets for an annotation that specifies the github org/repo.
 
@@ -22,7 +22,8 @@ versions_exporter takes all of its configuration via env variables.
 
 ## Limitations
 
-- In the case of a deployment or daemonset with multiple pods, versions_exporter will only take the first pod to get the current version. So you should always specify the main application first.
+- In the case of a deployment or daemonset with multiple containers, versions_exporter will only take the first container to get the current version. So you should always specify the main application first.
 - For the moment only deployment and daemonset are supported
+- For the moment only github is supported
 - It is strongly encouraged to add an `app` label to your deployment, as versions_exporter will use this label for the application name. Otherwise, it will use the name of the deployment, wich can lead to some unwanted names, with helm for instance.
 - Github as a rate limit of 60/h on api calls for unauthenticated users, so plan accordingly!
