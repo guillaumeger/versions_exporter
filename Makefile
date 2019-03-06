@@ -1,6 +1,7 @@
 .DEFAULT_GOAL := all
-REPO_URL=harbor.nuglif.net/admin
+REPO_URL=harbor.nuglif.net/nuglif
 APP=versions_exporter
+TAG=0.1.6
 
 .PHONY: build-image clean
 
