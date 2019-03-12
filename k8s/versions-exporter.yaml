@@ -1,38 +1,63 @@
+---
 apiVersion: extensions/v1beta1
 kind: Deployment
 metadata:
-  name: versions-explorer
-  namespace: admin
+  name: versions-exporter
+  namespace: monitoring
 spec:
   replicas: 1
   template:
       metadata:
         labels:
           app: versions_exporter
+        annotations:
+          prometheus.io/scrape: "true"
       spec:
         containers:
           - name: versions-exporter
-            image: harbor.nuglif.net/adminversions_exporter:0.1.0
+            image: harbor.nuglif.net/nuglif/versions_exporter:0.1.6
             env:
               - name: VERSIONS_EXPORTER_LOGLEVEL
                 value: debug
-              - name: VERSIONS_EXPORTER_CONFIG_FILE
-                value: /config.yaml
             ports:
               - name: metrics
                 containerPort: 8083
+        serviceAccountName: versions-exporter
 ---
-apiVersion: v1
 kind: Service
+apiVersion: v1
 metadata:
   name: versions-exporter
-  namespace: admin
 spec:
   selector:
     app: versions_exporter
-  type: ClusterIP
   ports:
-    - name: metrics
-      port: 80
-      targetPort: 8083
-      protocol: TCP
+  - name: metrics
+    port: 8083 
+    protocol: TCP
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: versions-exporter
+---
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: versions-exporter
+rules:
+  - apiGroups: [""]
+    resources: ["deployments", "daemonsets"]
+    verbs: ["get", "list"]
+---
+api: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: versions-exporter
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: versions-exporter
+subjects:
+  - kind: ServiceAccount
+    name: versions-exporter

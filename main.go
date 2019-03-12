@@ -1,82 +1,43 @@
 package main
 
 import (
-	"encoding/json"
-	"io/ioutil"
+	"context"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
+	"github.com/google/go-github/github"
 	"github.com/onrik/logrus/filename"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	log "github.com/sirupsen/logrus"
-	"gopkg.in/yaml.v2"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	restclient "k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 )
-
-type container struct {
-	Name       string `json:"name,omitempty"`
-	Repository string `json:"repository,omitempty"`
-	Tag        string `json:"tag,omitempty"`
-}
-
-type containerStatus struct {
-	container
-	Ready bool `json:"ready,omitempty"`
-}
-
-type pod struct {
-	Name              string            `json:"name,omitempty"`
-	ContainerStatuses []containerStatus `json:"containerStatuses"`
-}
-
-type app struct {
-	Name                string      `json:"name,omitempty"`
-	Chart               string      `json:"chart,omitempty"`
-	Replicas            int         `json:"replicas,omitempty"`
-	UnavailableReplicas int         `json:"unavailableReplicas,omitempty"`
-	ContainersSpec      []container `json:"containersSpec,omitempty"`
-	Pods                []pod       `json:"pods,omitempty"`
-}
-
-type environment struct {
-	Environment  string `json:"environment,omitempty"`
-	Namespace    string `json:"namespace,omitempty"`
-	Applications []app  `json:"applications,omitempty"`
-}
-
-type config struct {
-	SourceURL       string   `yaml:"source_url,omitempty"`
-	RefreshInterval string   `yaml:"refresh_interval,omitempty"`
-	Contexts        []string `yaml:"contexts,omitempty"`
-}
 
 var infoGauge = promauto.NewGaugeVec(prometheus.GaugeOpts{
 	Name: "application_info",
 	Help: "Informations on applications, especially version.",
 }, []string{
 	"application_name",
-	"version",
-	"environment",
-	"repository",
-	"container_name",
+	"current_version",
+	"latest_version",
 })
 
-func getConfig() config {
-	var config config
-	f, err := ioutil.ReadFile(os.Getenv("VERSIONS_EXPORTER_CONFIG_FILE"))
-	if err != nil {
-		log.Fatalf("An error occured while reading config file: %s\n", err)
-	}
-	err = yaml.Unmarshal(f, &config)
-	if err != nil {
-		log.Fatalf("An error occured while unmarshalling config: %s\n", err)
-	}
-	return config
+type versionMap struct {
+	name           string
+	currentVersion string
+	latestVersion  string
 }
 
-func logConfig() {
+type versions []versionMap
+
+func init() {
 	logLevels := map[string]log.Level{
 		"panic": log.PanicLevel,
 		"fatal": log.FatalLevel,
@@ -96,53 +57,160 @@ func logConfig() {
 	customFormatter.TimestampFormat = "2006-01-02 15:04:05"
 	log.SetFormatter(customFormatter)
 	customFormatter.FullTimestamp = true
+	log.SetOutput(os.Stdout)
+}
+
+func getRefreshInterval() string {
+	r, ok := os.LookupEnv("VERSIONS_EXPORTER_REFRESH_INTERVAL")
+	if !ok {
+		return "1h"
+	}
+	return r
+}
+
+func getAnnotationName() string {
+	a, ok := os.LookupEnv("VERSIONS_EXPORTER_ANNOTATION_NAME")
+	if !ok {
+		return "versions-exporter/githubRepo"
+	}
+	return a
+}
+
+func getPort() string {
+	p, ok := os.LookupEnv("VERSIONS_EXPORTER_PORT")
+	if !ok {
+		return "8083"
+	}
+	return p
+}
+
+func getLatestVersion(repo string) string {
+	log.Debugf("Getting latest version of repo %v from github.", repo)
+	sepRepo := strings.Split(repo, "/")
+	client := github.NewClient(nil)
+	version, _, err := client.Repositories.GetLatestRelease(context.Background(), sepRepo[0], sepRepo[1])
+	if err != nil {
+		log.Errorf("An error occured: %v.", err)
+		return ""
+	}
+	return *version.TagName
+}
+
+func (ver versions) getDeploysVersions(c *kubernetes.Clientset) versions {
+	log.Debugf("Getting current versions for deployments.")
+	deploys, err := c.ExtensionsV1beta1().Deployments("").List(metav1.ListOptions{})
+	if err != nil {
+		log.Errorf("Error getting deployments: %v.", err)
+	}
+	annotation := getAnnotationName()
+	log.Debugf("Using annotation %v", annotation)
+	for d := range deploys.Items {
+		v, ok := deploys.Items[d].Annotations[annotation]
+		if ok {
+			//if the label "app" is set we use this for application name, otherwise we use the name of the deploy
+			n, ok := deploys.Items[d].Labels["app"]
+			var appName string
+			if ok {
+				appName = n
+			} else {
+				appName = deploys.Items[d].Name
+			}
+			latestVersion := getLatestVersion(v)
+			containers := deploys.Items[d].Spec.Template.Spec.Containers
+			currentVersion := strings.Split(containers[0].Image, ":")[1]
+			log.Debugf("Current version for application %v is %v", appName, currentVersion)
+			ver = append(ver, versionMap{appName, currentVersion, latestVersion})
+		}
+	}
+	return ver
+}
+
+func (ver versions) getDSVersions(c *kubernetes.Clientset) versions {
+	log.Debugf("Getting current versions for daemonsets.")
+	ds, err := c.AppsV1().DaemonSets("").List(metav1.ListOptions{})
+	if err != nil {
+		log.Errorf("Error getting daemonsets: %v.", err)
+	}
+	annotation := getAnnotationName()
+	for d := range ds.Items {
+		v, ok := ds.Items[d].Annotations[annotation]
+		if ok {
+			//if the label "app" is set we use this for application name, otherwise we use the name of the ds
+			n, ok := ds.Items[d].Labels["app"]
+			var appName string
+			if ok {
+				appName = n
+			} else {
+				appName = ds.Items[d].Name
+			}
+			latestVersion := getLatestVersion(v)
+			containers := ds.Items[d].Spec.Template.Spec.Containers
+			currentVersion := strings.Split(containers[0].Image, ":")[1]
+			log.Debugf("Current version for application %v is %v", appName, currentVersion)
+			ver = append(ver, versionMap{appName, currentVersion, latestVersion})
+		}
+	}
+	return ver
+}
+
+func createK8sClient() *kubernetes.Clientset {
+	var conf *restclient.Config
+	var err error
+	c, ok := os.LookupEnv("VERSIONS_EXPORTER_OUT_OF_CLUSTER")
+	if ok {
+		if c == "true" {
+			conf, err = clientcmd.BuildConfigFromFlags("", os.Getenv("HOME")+"/.kube/config")
+			if err != nil {
+				log.Fatalf("Could not create k8s client: %v", err)
+			}
+		} else {
+			conf, err = rest.InClusterConfig()
+			if err != nil {
+				log.Fatalf("Could not create k8s client: %v", err)
+			}
+		}
+	} else {
+		conf, err = rest.InClusterConfig()
+		if err != nil {
+			log.Fatalf("Could not create k8s client: %v", err)
+		}
+	}
+
+	clientset, err := kubernetes.NewForConfig(conf)
+	if err != nil {
+		panic(err.Error)
+	}
+	return clientset
 }
 
 func main() {
-	logConfig()
-	config := getConfig()
 	go func() {
 		for {
-			log.Printf("Starting main loop iteration...")
+			log.Printf("Starting main loop iteration")
 			infoGauge.Reset()
-			for i := range config.Contexts {
-				log.Debugf("Getting env %s", config.Contexts[i])
-				resp, err := http.Get(config.SourceURL + config.Contexts[i])
-				if err != nil {
-					log.Errorf("An error occured: %s\n", err)
-				}
-				var env environment
-				decoder := json.NewDecoder(resp.Body)
-				err = decoder.Decode(&env)
-				if err != nil {
-					log.Errorf("An error occured: %s\n", err)
-				}
-				for a := range env.Applications {
-					log.Debugf("Getting application %s", env.Applications[a])
-					for c := range env.Applications[a].ContainersSpec {
-						log.Debugf("Getting container %s", env.Applications[a].ContainersSpec)
-						infoGauge.With(prometheus.Labels{
-							"application_name": env.Applications[a].Name,
-							"version":          env.Applications[a].ContainersSpec[c].Tag,
-							"environment":      config.Contexts[i],
-							"repository":       env.Applications[a].ContainersSpec[c].Repository,
-							"container_name":   env.Applications[a].ContainersSpec[c].Name,
-						}).Set(1)
-					}
-				}
+			var versions versions
+			clientset := createK8sClient()
+			versions = versions.getDeploysVersions(clientset)
+			versions = versions.getDSVersions(clientset)
+			for _, v := range versions {
+				log.Debugf("application name: %v, current version: %v, latest version: %v.", v.name, v.currentVersion, v.latestVersion)
+				infoGauge.With(prometheus.Labels{
+					"application_name": v.name,
+					"current_version":  v.currentVersion,
+					"latest_version":   v.latestVersion,
+				}).Set(1)
 			}
-			log.Printf("Iteration done.")
-			log.Printf("Next iteration in %v.", config.RefreshInterval)
-			r, err := time.ParseDuration(config.RefreshInterval)
-			if err != nil {
-				log.Errorf("An error occured: %s\n", err)
-			}
+			log.Printf("Finished main loop")
+			r, _ := time.ParseDuration(getRefreshInterval())
+			log.Printf("Next iteration in %v", r)
 			time.Sleep(r)
 		}
 	}()
 	http.Handle("/metrics", promhttp.Handler())
-	err := http.ListenAndServe(":8083", nil)
+	port := getPort()
+	log.Infof("Serving /metrics on port %v", port)
+	err := http.ListenAndServe(":"+port, nil)
 	if err != nil {
-		log.Fatalf("An error occured: %s\n", err)
+		log.Fatalf("An error occured: %s", err)
 	}
 }
