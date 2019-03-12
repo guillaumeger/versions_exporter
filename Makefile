@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := all
-REPO_URL=gg1113
+REPO_URL=harbor.nuglif.net/nuglif
 APP=versions_exporter
 TAG=0.1.6
 
