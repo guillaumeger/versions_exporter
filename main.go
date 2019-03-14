@@ -77,7 +77,7 @@ func getAnnotationName() string {
 }
 
 func getPort() string {
-	p, ok := os.LookupEnv("VERSIONS_EXPORTER_PORT")
+	p, ok := os.LookupEnv("VERSIONS_EXPORTER_METRICS_PORT")
 	if !ok {
 		return "8083"
 	}

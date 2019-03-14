@@ -18,7 +18,7 @@ versions_exporter takes all of its configuration via env variables.
 |VERSIONS_EXPORTER_REFRESH_INTERVAL | string, [see the doc](https://golang.org/pkg/time/#Duration) | The interval of time between each scan | `1h` |
 |VERSIONS_EXPORTER_OUT_OF_CLUSTER | boolean | By default, versions_exporter is designed to run inside the k8s cluster, but it can also run outside by setting this var to `true`. It expects a valid kube config file. | `false`
 |VERSIONS_EXPORTER_ANNOTATION_NAME | string | The annotation name that will specify the github repo | `versions_exporter/githubRepo`|
-|VERSIONS_EXPORTER_PORT | string | the port that will be used to expose metrics | `8083`|
+|VERSIONS_EXPORTER_METRICS_PORT | string | the port that will be used to expose metrics | `8083`|
 
 ## Limitations
 
