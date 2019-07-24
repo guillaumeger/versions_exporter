@@ -96,6 +96,21 @@ func getLatestVersion(repo string) string {
 	return *version.TagName
 }
 
+func (ver versions) getPodsVersions(c *kubernetes.Clientset) versions {
+	pods, err := c.CoreV1().Pods("").List(metav1.ListOptions{})
+	if err != nil {
+		log.Errorf("Error getting pods: %v.", err)
+	}
+	annotation := getAnnotationName()
+	log.Debugf("Using annotation %v", annotation)
+	for p := range pods.Items {
+		v, ok := pods.Items[p].Annotations[annotation]
+		if ok {
+
+		}
+	}
+}
+
 func (ver versions) getDeploysVersions(c *kubernetes.Clientset) versions {
 	log.Debugf("Getting current versions for deployments.")
 	deploys, err := c.ExtensionsV1beta1().Deployments("").List(metav1.ListOptions{})
