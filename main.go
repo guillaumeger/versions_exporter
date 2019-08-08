@@ -97,6 +97,7 @@ func getLatestVersion(repo string) string {
 }
 
 func (ver versions) getPodsVersions(c *kubernetes.Clientset) versions {
+	log.Debugf("Getting current versions for deployments.")
 	pods, err := c.CoreV1().Pods("").List(metav1.ListOptions{})
 	if err != nil {
 		log.Errorf("Error getting pods: %v.", err)
@@ -106,60 +107,9 @@ func (ver versions) getPodsVersions(c *kubernetes.Clientset) versions {
 	for p := range pods.Items {
 		v, ok := pods.Items[p].Annotations[annotation]
 		if ok {
-
-		}
-	}
-}
-
-func (ver versions) getDeploysVersions(c *kubernetes.Clientset) versions {
-	log.Debugf("Getting current versions for deployments.")
-	deploys, err := c.ExtensionsV1beta1().Deployments("").List(metav1.ListOptions{})
-	if err != nil {
-		log.Errorf("Error getting deployments: %v.", err)
-	}
-	annotation := getAnnotationName()
-	log.Debugf("Using annotation %v", annotation)
-	for d := range deploys.Items {
-		v, ok := deploys.Items[d].Annotations[annotation]
-		if ok {
-			//if the label "app" is set we use this for application name, otherwise we use the name of the deploy
-			n, ok := deploys.Items[d].Labels["app"]
-			var appName string
-			if ok {
-				appName = n
-			} else {
-				appName = deploys.Items[d].Name
-			}
+			appName := pods.Items[p].Spec.Containers[0].Name
 			latestVersion := getLatestVersion(v)
-			containers := deploys.Items[d].Spec.Template.Spec.Containers
-			currentVersion := strings.Split(containers[0].Image, ":")[1]
-			log.Debugf("Current version for application %v is %v", appName, currentVersion)
-			ver = append(ver, versionMap{appName, currentVersion, latestVersion})
-		}
-	}
-	return ver
-}
-
-func (ver versions) getDSVersions(c *kubernetes.Clientset) versions {
-	log.Debugf("Getting current versions for daemonsets.")
-	ds, err := c.AppsV1().DaemonSets("").List(metav1.ListOptions{})
-	if err != nil {
-		log.Errorf("Error getting daemonsets: %v.", err)
-	}
-	annotation := getAnnotationName()
-	for d := range ds.Items {
-		v, ok := ds.Items[d].Annotations[annotation]
-		if ok {
-			//if the label "app" is set we use this for application name, otherwise we use the name of the ds
-			n, ok := ds.Items[d].Labels["app"]
-			var appName string
-			if ok {
-				appName = n
-			} else {
-				appName = ds.Items[d].Name
-			}
-			latestVersion := getLatestVersion(v)
-			containers := ds.Items[d].Spec.Template.Spec.Containers
+			containers := pods.Items[p].Spec.Containers
 			currentVersion := strings.Split(containers[0].Image, ":")[1]
 			log.Debugf("Current version for application %v is %v", appName, currentVersion)
 			ver = append(ver, versionMap{appName, currentVersion, latestVersion})
@@ -205,8 +155,7 @@ func main() {
 			infoGauge.Reset()
 			var versions versions
 			clientset := createK8sClient()
-			versions = versions.getDeploysVersions(clientset)
-			versions = versions.getDSVersions(clientset)
+			versions = versions.getPodsVersions(clientset)
 			for _, v := range versions {
 				log.Debugf("application name: %v, current version: %v, latest version: %v.", v.name, v.currentVersion, v.latestVersion)
 				infoGauge.With(prometheus.Labels{
