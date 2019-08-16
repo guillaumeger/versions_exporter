@@ -60,28 +60,12 @@ func init() {
 	log.SetOutput(os.Stdout)
 }
 
-func getRefreshInterval() string {
-	r, ok := os.LookupEnv("VERSIONS_EXPORTER_REFRESH_INTERVAL")
+func getDefaultValue(envVar, def string) string {
+	r, ok := os.LookupEnv(envVar)
 	if !ok {
-		return "1h"
+		return def
 	}
 	return r
-}
-
-func getAnnotationName() string {
-	a, ok := os.LookupEnv("VERSIONS_EXPORTER_ANNOTATION_NAME")
-	if !ok {
-		return "versions-exporter/githubRepo"
-	}
-	return a
-}
-
-func getPort() string {
-	p, ok := os.LookupEnv("VERSIONS_EXPORTER_METRICS_PORT")
-	if !ok {
-		return "8083"
-	}
-	return p
 }
 
 func getLatestVersion(repo string) string {
@@ -97,12 +81,12 @@ func getLatestVersion(repo string) string {
 }
 
 func (ver versions) getPodsVersions(c *kubernetes.Clientset) versions {
-	log.Debugf("Getting current versions for deployments.")
+	log.Debugf("Getting current versions for pods.")
 	pods, err := c.CoreV1().Pods("").List(metav1.ListOptions{})
 	if err != nil {
 		log.Errorf("Error getting pods: %v.", err)
 	}
-	annotation := getAnnotationName()
+	annotation := getDefaultValue("VERSIONS_EXPORTER_ANNOTATION_NAME", "versions-exporter/githubRepo")
 	log.Debugf("Using annotation %v", annotation)
 	for p := range pods.Items {
 		v, ok := pods.Items[p].Annotations[annotation]
@@ -113,6 +97,30 @@ func (ver versions) getPodsVersions(c *kubernetes.Clientset) versions {
 			currentVersion := strings.Split(containers[0].Image, ":")[1]
 			log.Debugf("Current version for application %v is %v", appName, currentVersion)
 			ver = append(ver, versionMap{appName, currentVersion, latestVersion})
+		}
+	}
+	return ver
+}
+
+func (ver versions) getCustomContainersVersions(c *kubernetes.Clientset) versions {
+	log.Debugf("Getting custom containers versions.")
+	pods, err := c.CoreV1().Pods("").List(metav1.ListOptions{})
+	if err != nil {
+		log.Errorf("Error getting pods: %v.", err)
+	}
+	for p := range pods.Items {
+		for k, v := range pods.Items[p].Annotations {
+			if strings.Split(k, "/")[0] == "versions-exporter" && strings.Split(k, "/")[1] != "githubRepo" {
+				appName := strings.Split(k, "/")[1]
+				latestVersion := getLatestVersion(v)
+				var currentVersion string
+				for container := range pods.Items[p].Spec.Containers {
+					if pods.Items[p].Spec.Containers[container].Name == appName {
+						currentVersion = strings.Split(pods.Items[p].Spec.Containers[container].Image, ":")[1]
+					}
+				}
+				ver = append(ver, versionMap{appName, currentVersion, latestVersion})
+			}
 		}
 	}
 	return ver
@@ -156,6 +164,7 @@ func main() {
 			var versions versions
 			clientset := createK8sClient()
 			versions = versions.getPodsVersions(clientset)
+			versions = versions.getCustomContainersVersions(clientset)
 			for _, v := range versions {
 				log.Debugf("application name: %v, current version: %v, latest version: %v.", v.name, v.currentVersion, v.latestVersion)
 				infoGauge.With(prometheus.Labels{
@@ -165,13 +174,13 @@ func main() {
 				}).Set(1)
 			}
 			log.Printf("Finished main loop")
-			r, _ := time.ParseDuration(getRefreshInterval())
+			r, _ := time.ParseDuration(getDefaultValue("VERSIONS_EXPORTER_REFRESH_INTERVAL", "1h"))
 			log.Printf("Next iteration in %v", r)
 			time.Sleep(r)
 		}
 	}()
 	http.Handle("/metrics", promhttp.Handler())
-	port := getPort()
+	port := getDefaultValue("VERSIONS_EXPORTER_METRICS_PORT", "8083")
 	log.Infof("Serving /metrics on port %v", port)
 	err := http.ListenAndServe(":"+port, nil)
 	if err != nil {
